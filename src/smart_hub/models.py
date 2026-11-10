@@ -14,7 +14,7 @@ class ScheduledAction:
     entry_index: int
 
     @classmethod
-    def from_api(cls, data: dict[str, Any]) -> "ScheduledAction":
+    def from_api(cls, data: dict[str, Any]) -> ScheduledAction:
         """Decode the API's next-action object without schedule entry details."""
         return cls(
             delay_seconds=data["in_s"],
@@ -43,7 +43,7 @@ class PortStatus:
     next_action: ScheduledAction | None
 
     @classmethod
-    def from_api(cls, data: dict[str, Any]) -> "PortStatus":
+    def from_api(cls, data: dict[str, Any]) -> PortStatus:
         """Decode either port endpoint; bulk snapshots omit power_mode."""
         monitor = data["monitor"]
         schedule = data["schedule"]
@@ -103,7 +103,7 @@ class HubInfo:
     ports_faulted: int
 
     @classmethod
-    def from_api(cls, data: dict[str, Any]) -> "HubInfo":
+    def from_api(cls, data: dict[str, Any]) -> HubInfo:
         """Normalize /api/hub, retaining only currently valid measurements."""
         power = data["power"]
         sensors = data["sensors"]

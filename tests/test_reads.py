@@ -1,17 +1,17 @@
 """Transport-backed regressions for hub snapshots, identification, and polling."""
 
 import asyncio
+import unittest
 from copy import deepcopy
 from dataclasses import FrozenInstanceError, asdict
-import unittest
+from typing import Any
 from unittest.mock import patch
 
 import httpx2
 
 from smart_hub import Hub, HubInfo, PortStatus, ScheduledAction
 
-
-HUB_DATA = {
+HUB_DATA: dict[str, Any] = {
     "name": "Smart USB Hub",
     "fw": "1.0.0",
     "uptime_s": 838,
@@ -141,14 +141,20 @@ class ReadTests(unittest.IsolatedAsyncioTestCase):
         self.transport = ClosingTransport(self.handle_request)
         client = httpx2.Client
         async_client = httpx2.AsyncClient
-        self.enterContext(patch(
-            "smart_hub.httpx2.Client",
-            side_effect=lambda **kwargs: client(transport=self.transport, **kwargs),
-        ))
-        self.enterContext(patch(
-            "smart_hub.httpx2.AsyncClient",
-            side_effect=lambda **kwargs: async_client(transport=self.transport, **kwargs),
-        ))
+        self.enterContext(
+            patch(
+                "smart_hub.httpx2.Client",
+                side_effect=lambda **kwargs: client(transport=self.transport, **kwargs),
+            )
+        )
+        self.enterContext(
+            patch(
+                "smart_hub.httpx2.AsyncClient",
+                side_effect=lambda **kwargs: async_client(
+                    transport=self.transport, **kwargs
+                ),
+            )
+        )
         self.hub = Hub("http://example.test")
 
     def handle_request(self, request):
@@ -175,6 +181,21 @@ class ReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.requests)
         self.assertTrue(all(request.method == "GET" for request in self.requests))
 
+    def test_snapshots_are_frozen(self):
+        status = self.hub.status(6)
+        snapshots = (
+            (self.hub.info(), "temperature_c", 12.0),
+            (status, "enabled", False),
+            (status.next_action, "enabled", True),
+        )
+        # Dynamic writes exercise the runtime immutability contract.
+        for snapshot, field, value in snapshots:
+            with (
+                self.subTest(model=type(snapshot).__name__),
+                self.assertRaises(FrozenInstanceError),
+            ):
+                setattr(snapshot, field, value)
+
     def test_invalid_environment_readings_are_not_real_zero(self):
         self.hub_data["sensors"] = {"valid": False, "temp_c": 0.0, "humidity": 0.0}
         unavailable = self.hub.info()
@@ -186,8 +207,6 @@ class ReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((zero.temperature_c, zero.humidity_percent), (0.0, 0.0))
         self.assertIsNone(unavailable.temperature_c)
         self.assertIsNone(asdict(unavailable)["humidity_percent"])
-        with self.assertRaises(FrozenInstanceError):
-            zero.temperature_c = 12.0
 
     def test_unsynced_clock_has_no_iso_timestamp(self):
         self.hub_data["clock"].update(synced=False, iso="")
@@ -219,27 +238,31 @@ class ReadTests(unittest.IsolatedAsyncioTestCase):
 
     def test_schedule_is_normalized_and_does_not_require_a_next_action(self):
         status = self.hub.status(6)
-        self.assertIsInstance(status.next_action, ScheduledAction)
-        self.assertEqual(asdict(status)["next_action"], {
-            "delay_seconds": 82,
-            "enabled": False,
-            "local_time": "Sun 16:35",
-            "entry_index": 0,
-        })
+        next_action = status.next_action
+        assert isinstance(next_action, ScheduledAction)
+        self.assertEqual(
+            asdict(status)["next_action"],
+            {
+                "delay_seconds": 82,
+                "enabled": False,
+                "local_time": "Sun 16:35",
+                "entry_index": 0,
+            },
+        )
         self.assertEqual(status.schedule_count, 2)
         self.assertNotIn("entries", asdict(status))
-        with self.assertRaises(FrozenInstanceError):
-            status.next_action.enabled = True
-        with self.assertRaises(FrozenInstanceError):
-            status.enabled = False
         for count in (2, 0):
             with self.subTest(count=count):
-                self.details[6]["schedule"] = {"count": count, "next": None, "entries": []}
+                self.details[6]["schedule"] = {
+                    "count": count,
+                    "next": None,
+                    "entries": [],
+                }
                 self.bulk_data["ports"][5]["schedule"] = {"count": count, "next": None}
                 for no_next in (self.hub.status(6), self.hub.ports()[5]):
                     self.assertEqual(no_next.schedule_count, count)
                     self.assertIsNone(no_next.next_action)
-        self.assertFalse(status.next_action.enabled)
+        self.assertFalse(next_action.enabled)
 
     def test_bulk_does_not_guess_detail_only_power_mode(self):
         bulk = self.hub.ports()
@@ -266,8 +289,10 @@ class ReadTests(unittest.IsolatedAsyncioTestCase):
     def test_http_errors_propagate_from_reads_and_identify(self):
         self.http_status = 503
         for operation in (
-            self.hub.info, self.hub.ports,
-            lambda: self.hub.status(6), lambda: self.hub.identify(6),
+            self.hub.info,
+            self.hub.ports,
+            lambda: self.hub.status(6),
+            lambda: self.hub.identify(6),
         ):
             with self.subTest(operation=operation):
                 with self.assertRaises(httpx2.HTTPStatusError) as caught:
@@ -275,7 +300,8 @@ class ReadTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(caught.exception.response.status_code, 503)
 
     async def test_invalid_ports_are_rejected_without_contacting_hub(self):
-        for port in (0, 7, True, 1.5, "6"):
+        invalid_ports: tuple[Any, ...] = (0, 7, True, 1.5, "6")
+        for port in invalid_ports:
             with self.subTest(port=port):
                 for operation in (self.hub.status, self.hub.identify):
                     with self.assertRaises(ValueError):
@@ -307,13 +333,17 @@ class ReadTests(unittest.IsolatedAsyncioTestCase):
         stream = self.hub.watch(6, interval=0.001)
         try:
             first = await asyncio.wait_for(anext(stream), timeout=2)
-            self.details[6].update(enabled=False, state="blue", volts=0.0, ma=0.0, mw=0.0)
+            self.details[6].update(
+                enabled=False, state="blue", volts=0.0, ma=0.0, mw=0.0
+            )
             self.details[6]["schedule"]["next"]["in_s"] = 81
             second = await asyncio.wait_for(anext(stream), timeout=2)
             self.assertIsInstance(first, PortStatus)
             self.assertIsInstance(second, PortStatus)
             self.assertTrue(first.enabled)
             self.assertFalse(second.enabled)
+            assert first.next_action is not None
+            assert second.next_action is not None
             self.assertEqual(first.next_action.delay_seconds, 82)
             self.assertEqual(second.next_action.delay_seconds, 81)
             self.assertEqual(second.led_state, "blue")
@@ -364,7 +394,9 @@ class ReadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.transport.async_closes, 1)
         self.assert_only_reads()
 
-    async def test_watch_first_fetch_is_immediate_and_sleep_cancellation_never_writes(self):
+    async def test_watch_first_fetch_is_immediate_and_sleep_cancellation_never_writes(
+        self,
+    ):
         stream = self.hub.watch(6, interval=3600)
         pending = None
         try:

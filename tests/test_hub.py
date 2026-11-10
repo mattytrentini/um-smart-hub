@@ -2,6 +2,7 @@
 
 import asyncio
 import unittest
+from typing import Any
 from unittest.mock import patch
 
 import httpx2
@@ -19,14 +20,20 @@ class HubTests(unittest.IsolatedAsyncioTestCase):
         transport = httpx2.MockTransport(self.handle_request)
         client = httpx2.Client
         async_client = httpx2.AsyncClient
-        self.enterContext(patch(
-            "smart_hub.httpx2.Client",
-            side_effect=lambda **kwargs: client(transport=transport, **kwargs),
-        ))
-        self.enterContext(patch(
-            "smart_hub.httpx2.AsyncClient",
-            side_effect=lambda **kwargs: async_client(transport=transport, **kwargs),
-        ))
+        self.enterContext(
+            patch(
+                "smart_hub.httpx2.Client",
+                side_effect=lambda **kwargs: client(transport=transport, **kwargs),
+            )
+        )
+        self.enterContext(
+            patch(
+                "smart_hub.httpx2.AsyncClient",
+                side_effect=lambda **kwargs: async_client(
+                    transport=transport, **kwargs
+                ),
+            )
+        )
         self.hub = Hub("http://example.test")
 
     def handle_request(self, request):
@@ -39,9 +46,9 @@ class HubTests(unittest.IsolatedAsyncioTestCase):
         if not self.ignore_writes:
             self.enabled = state
         self.transitions.put_nowait(self.enabled)
-        return httpx2.Response(200, json={
-            "ports": [{"enabled": self.enabled} for _ in range(6)]
-        })
+        return httpx2.Response(
+            200, json={"ports": [{"enabled": self.enabled} for _ in range(6)]}
+        )
 
     def test_controls_and_single_toggle(self):
         self.assertIs(self.hub.on(6), True)
@@ -64,18 +71,20 @@ class HubTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.writes, [])
 
     def test_port_bounds_before_requests(self):
-        for port in (0, 7, True, 1.5):
+        invalid_ports: tuple[Any, ...] = (0, 7, True, 1.5)
+        for port in invalid_ports:
             for action in (self.hub.on, self.hub.off, self.hub.toggle):
-                with self.subTest(port=port, action=action.__name__):
-                    with self.assertRaises(ValueError):
-                        action(port)
+                with (
+                    self.subTest(port=port, action=action.__name__),
+                    self.assertRaises(ValueError),
+                ):
+                    action(port)
         self.assertEqual(self.writes, [])
 
     def test_invalid_intervals_before_coroutine_creation(self):
         for seconds in (-1, float("nan"), float("inf")):
-            with self.subTest(seconds=seconds):
-                with self.assertRaises(ValueError):
-                    self.hub.toggle(6, seconds)
+            with self.subTest(seconds=seconds), self.assertRaises(ValueError):
+                self.hub.toggle(6, seconds)
         self.assertEqual(self.writes, [])
 
     async def test_async_loop_repeats_and_cancel_preserves_on(self):

@@ -1,16 +1,18 @@
-# smart-hub
+# um-smart-hub
 
 Python library and `hub` CLI for the
 [UM Smart USB Hub](https://github.com/UnexpectedMaker/um_smart_usb_hub_6).
-Requires Python 3.11+; uses httpx2 and Typer. Not yet published.
+Requires Python 3.14+; uses httpx2 and Typer.
 
 ## CLI
 
-From this directory, run `uv run hub ...`. To install the CLI locally:
+From this directory, run `uv run hub ...`. To install the CLI from PyPI:
 
 ```sh
-uv tool install .
+uv tool install um-smart-hub
 ```
+
+To install from a local checkout instead, use `uv tool install .`.
 
 ```sh
 hub on 1        # turn port 1 on
@@ -44,11 +46,13 @@ machine-readable.
 
 ## Python library
 
-Install into another uv project using a local path:
+Install into another uv project:
 
 ```sh
-uv add /absolute/path/to/hub
+uv add um-smart-hub
 ```
+
+For local development, use `uv add /absolute/path/to/hub` instead.
 
 ```python
 from smart_hub import Hub
@@ -105,12 +109,14 @@ import asyncio
 from contextlib import aclosing
 from smart_hub import Hub
 
+
 async def monitor():
     hub = Hub()
     async with aclosing(hub.watch(6, interval=0.5)) as snapshots:
         async for port in snapshots:
             print(port.voltage_v, port.current_ma, port.fault)
             # Break when your application is finished monitoring.
+
 
 asyncio.run(monitor())
 ```
@@ -129,9 +135,11 @@ client and `asyncio.sleep`, so it doesn't block other asyncio tasks:
 import asyncio
 from smart_hub import Hub
 
+
 async def main():
     hub = Hub()
     await hub.toggle(6, 2)  # flip immediately, then every 2 seconds indefinitely
+
 
 asyncio.run(main())
 ```
@@ -167,10 +175,85 @@ maintaining two equivalent interfaces isn't worthwhile for the current scope.
 ## Development
 
 ```sh
-uv sync
-uv run python -m unittest discover -s tests -v
+uv sync --locked
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked ty check
+uv run --locked python -m unittest discover -s tests -v
 uv build
 ```
 
-Distribution name: `smart-hub`; import package: `smart_hub`; CLI command: `hub`.
+Ruff and ty are uv development dependencies. Ruff checks lint, import ordering,
+Python modernization, and formatting; ty checks the library, CLI, and tests
+using Python 3.14. To apply Ruff's safe fixes and formatting locally:
+
+```sh
+uv run ruff check --fix .
+uv run ruff format .
+```
+
+`.github/workflows/ci.yml` runs lint, formatting, types, and regression checks on
+pull requests and pushes to `main`. The release workflow calls the same CI
+workflow before building distributions, so publishing cannot bypass those
+checks. No pre-commit hook is required.
+
+Distribution name: `um-smart-hub`; import package: `smart_hub`; CLI command: `hub`.
 The CLI delegates all hub controls to the library.
+
+## Releases and PyPI publishing
+
+`.github/workflows/release.yml` runs when a `v*` tag is **pushed**. It first calls
+the shared CI workflow to run Ruff, ty, and the regression suite on Python 3.14
+with locked dependencies. It then checks that the tag exactly matches `v` plus
+`[project].version`, builds a wheel and source distribution, and checks their
+metadata with Twine. A separate job publishes those artifacts to PyPI using
+Trusted Publishing. Only after publishing succeeds does it create a GitHub
+release with generated notes and attach the same distributions.
+
+Publishing uses short-lived GitHub OIDC credentials, not a stored PyPI API token.
+Only the publishing job has `id-token: write`; only the GitHub release job has
+`contents: write`. Actions are pinned to commit hashes.
+
+### One-time setup before the first release
+
+1. The PyPI distribution name is **`um-smart-hub`** (`[project].name` in
+   `pyproject.toml`). The explicit build-backend `module-name = "smart_hub"`
+   keeps the import package independent of the distribution name. The CLI
+   remains `hub`.
+2. In this repository's GitHub settings, create an environment named **`pypi`**.
+   Restrict deployments to release tags (`v*`); requiring reviewer approval is
+   recommended.
+3. In your [PyPI publishing settings](https://pypi.org/manage/account/publishing/),
+   add a **pending Trusted Publisher** for `um-smart-hub`:
+
+   | Setting | Value |
+   |---|---|
+   | PyPI project | `um-smart-hub` |
+   | Owner | `mattytrentini` |
+   | Repository | `um-smart-hub` |
+   | Workflow filename | `release.yml` |
+   | Environment | `pypi` |
+
+   For an existing PyPI project you own, add the same publisher in that project's
+   publishing settings instead. A pending publisher creates a new project on the
+   first successful upload; it **does not reserve its name** in advance. See the
+   [PyPI setup guide](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/).
+4. Commit and push the workflow, package metadata, and lockfile before pushing
+   a release tag.
+
+### Creating a release
+
+For an initial `0.1.0` release, after completing the setup above:
+
+```sh
+uv version 0.1.0
+uv lock
+# Commit any name/version/lockfile changes, then push the release commit.
+git push origin main
+git tag -a v0.1.0 -m "Release 0.1.0"
+git push origin v0.1.0
+```
+
+Use a new package version and matching tag for each subsequent release. Creating
+a local tag alone does not publish anything. Never reuse a version already
+uploaded to PyPI. The workflow deliberately has no manual-dispatch trigger.

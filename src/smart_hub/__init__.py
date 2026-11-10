@@ -2,7 +2,7 @@
 
 import asyncio
 import math
-from collections.abc import AsyncIterator, Coroutine
+from collections.abc import AsyncGenerator, Coroutine
 from typing import Any, overload
 
 import httpx2
@@ -67,9 +67,17 @@ class Hub:
             if response.json().get("ok") is not True:
                 raise RuntimeError(f"port {port} identification was not acknowledged")
 
+    @overload
+    def watch(self, port: int, interval: float = 1.0) -> AsyncGenerator[PortStatus]: ...
+
+    @overload
+    def watch(
+        self, port: None = None, interval: float = 1.0
+    ) -> AsyncGenerator[list[PortStatus]]: ...
+
     def watch(
         self, port: int | None = None, interval: float = 1.0
-    ) -> AsyncIterator[PortStatus | list[PortStatus]]:
+    ) -> AsyncGenerator[PortStatus | list[PortStatus]]:
         """Poll fresh snapshots immediately, then sleep interval between polls.
 
         One async client lives for the iterator's lifetime. Cancellation and HTTP
@@ -86,7 +94,7 @@ class Hub:
 
     async def _watch_loop(
         self, port: int | None, interval: float
-    ) -> AsyncIterator[PortStatus | list[PortStatus]]:
+    ) -> AsyncGenerator[PortStatus | list[PortStatus]]:
         """Keep a single read-only client until cancellation or iterator closure."""
         path = "/api/ports" if port is None else f"/api/ports/{port}"
         async with httpx2.AsyncClient(base_url=self.base_url, timeout=5.0) as client:

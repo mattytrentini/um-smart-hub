@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import Callable, Coroutine, Generator
 from contextlib import aclosing, contextmanager
 from dataclasses import asdict
 from typing import Annotated, Any
@@ -21,7 +21,9 @@ Port = Annotated[int, typer.Argument(min=1, max=6, help="Port number (1-6).")]
 OptionalPort = Annotated[
     int | None, typer.Argument(min=1, max=6, help="Port number; omit for all ports.")
 ]
-JsonOutput = Annotated[bool, typer.Option("--json", help="Output JSON instead of a table.")]
+JsonOutput = Annotated[
+    bool, typer.Option("--json", help="Output JSON instead of a table.")
+]
 console = Console(markup=False, highlight=False, emoji=False)
 
 
@@ -37,7 +39,7 @@ def main(
 
 
 @contextmanager
-def _errors() -> Iterator[None]:
+def _errors() -> Generator[None]:
     try:
         yield
     except KeyboardInterrupt:
@@ -57,7 +59,11 @@ def _run(port: int, action: Callable[[], bool | Coroutine[Any, Any, None]]) -> N
 
 
 def _json(snapshot: HubInfo | PortStatus | list[PortStatus]) -> None:
-    data = [asdict(port) for port in snapshot] if isinstance(snapshot, list) else asdict(snapshot)
+    data = (
+        [asdict(port) for port in snapshot]
+        if isinstance(snapshot, list)
+        else asdict(snapshot)
+    )
     typer.echo(json.dumps(data, allow_nan=False))
 
 
@@ -77,7 +83,10 @@ def _info_table(snapshot: HubInfo) -> Table:
         ("Firmware", snapshot.firmware),
         ("Uptime", _value(snapshot.uptime_seconds, " s")),
         ("Reset reason", snapshot.reset_reason),
-        ("Main / upstream 5 V", f"{_value(snapshot.main_5v)} / {_value(snapshot.upstream_5v)}"),
+        (
+            "Main / upstream 5 V",
+            f"{_value(snapshot.main_5v)} / {_value(snapshot.upstream_5v)}",
+        ),
         ("Total current", _value(snapshot.total_current_ma, " mA")),
         ("Total power", _value(snapshot.total_power_mw, " mW")),
         ("Temperature", _value(snapshot.temperature_c, " °C")),
@@ -91,10 +100,19 @@ def _info_table(snapshot: HubInfo) -> Table:
         ("WiFi SSID", snapshot.ssid),
         ("WiFi RSSI", _value(snapshot.rssi_dbm, " dBm")),
         ("Expander present", _value(snapshot.expander_present)),
-        ("Current monitors present", f"{_value(snapshot.current_monitor_1_present)} / {_value(snapshot.current_monitor_2_present)}"),
+        (
+            "Current monitors present",
+            f"{_value(snapshot.current_monitor_1_present)} / {_value(snapshot.current_monitor_2_present)}",
+        ),
         ("Environment sensor present", _value(snapshot.environment_sensor_present)),
-        ("Free heap / largest block", f"{snapshot.heap_free_bytes} / {snapshot.heap_largest_block_bytes} bytes"),
-        ("Ports enabled / occupied / faulted", f"{snapshot.ports_enabled} / {snapshot.ports_occupied} / {snapshot.ports_faulted} of {snapshot.port_count}"),
+        (
+            "Free heap / largest block",
+            f"{snapshot.heap_free_bytes} / {snapshot.heap_largest_block_bytes} bytes",
+        ),
+        (
+            "Ports enabled / occupied / faulted",
+            f"{snapshot.ports_enabled} / {snapshot.ports_occupied} / {snapshot.ports_faulted} of {snapshot.port_count}",
+        ),
     ]
     for label, value in rows:
         table.add_row(label, value)
@@ -131,15 +149,29 @@ def _status_table(snapshot: PortStatus | list[PortStatus]) -> Table:
             table.add_row(label, value)
         return table
     table = Table(title="Ports — enabled is a switch state, not a supply check")
-    for column in ("Port", "Name", "Enabled", "Device", "Fault", "V", "mA", "mW", "Next"):
+    for column in (
+        "Port",
+        "Name",
+        "Enabled",
+        "Device",
+        "Fault",
+        "V",
+        "mA",
+        "mW",
+        "Next",
+    ):
         table.add_column(column)
     for port in snapshot:
         table.add_row(
-            str(port.number), port.name or "—", _value(port.enabled),
-            _value(port.occupied), _value(port.fault),
-            *(_value(value) if value is not None else "—" for value in (
-                port.voltage_v, port.current_ma, port.power_mw
-            )),
+            str(port.number),
+            port.name or "—",
+            _value(port.enabled),
+            _value(port.occupied),
+            _value(port.fault),
+            *(
+                _value(value) if value is not None else "—"
+                for value in (port.voltage_v, port.current_ma, port.power_mw)
+            ),
             _next_action(port),
         )
     table.caption = "Device = plugged in; — measurement = unavailable"
@@ -178,7 +210,9 @@ def identify(ctx: typer.Context, port: Port) -> None:
         typer.echo(f"identifying port {port}")
 
 
-async def _watch(hub: Hub, port: int | None, interval: float, json_output: bool) -> None:
+async def _watch(
+    hub: Hub, port: int | None, interval: float, json_output: bool
+) -> None:
     async with aclosing(hub.watch(port, interval=interval)) as snapshots:
         if not json_output and console.is_terminal:
             with Live(console=console, auto_refresh=False) as live:
@@ -197,7 +231,8 @@ def watch(
     ctx: typer.Context,
     port: OptionalPort = None,
     interval: Annotated[
-        float, typer.Option(min=0, help="Polling interval in seconds; must be positive.")
+        float,
+        typer.Option(min=0, help="Polling interval in seconds; must be positive."),
     ] = 1.0,
     json_output: JsonOutput = False,
 ) -> None:
