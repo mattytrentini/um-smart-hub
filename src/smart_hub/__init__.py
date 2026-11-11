@@ -1,4 +1,4 @@
-"""Typed hub snapshots, port identification, and synchronous/async controls."""
+"""Typed hub snapshots, host-derived location, and synchronous/async controls."""
 
 import asyncio
 import math
@@ -7,9 +7,10 @@ from typing import Any, overload
 
 import httpx2
 
-from .models import HubInfo, PortStatus, PowerMode, ScheduledAction
+from ._location import _host_location
+from .models import HubInfo, Location, PortStatus, PowerMode, ScheduledAction
 
-__all__ = ["Hub", "HubInfo", "PortStatus", "PowerMode", "ScheduledAction"]
+__all__ = ["Hub", "HubInfo", "Location", "PortStatus", "PowerMode", "ScheduledAction"]
 
 
 def _validate_port(port: int) -> None:
@@ -26,11 +27,10 @@ def _confirmed(response: httpx2.Response, port: int, enabled: bool) -> bool:
     return actual
 
 
-def _port_setting(client: httpx2.Client, field: str) -> list[str]:
-    """Read a required six-port string array without exposing the schema."""
+def _settings_group(client: httpx2.Client, name: str, *, error: str) -> dict[str, Any]:
+    """Read required group values without including schema secrets in errors."""
     response = client.get("/api/settings/schema")
     response.raise_for_status()
-    error = f"ports.{field} setting is unavailable or invalid"
     try:
         schema = response.json()
     except ValueError:
@@ -41,7 +41,7 @@ def _port_setting(client: httpx2.Client, field: str) -> list[str]:
             (
                 group
                 for group in groups
-                if isinstance(group, dict) and group.get("name") == "ports"
+                if isinstance(group, dict) and group.get("name") == name
             ),
             None,
         )
@@ -49,7 +49,16 @@ def _port_setting(client: httpx2.Client, field: str) -> list[str]:
         else None
     )
     values = group.get("values") if group is not None else None
-    array = values.get(field) if isinstance(values, dict) else None
+    if isinstance(values, dict):
+        return values
+    raise RuntimeError(error)
+
+
+def _port_setting(client: httpx2.Client, field: str) -> list[str]:
+    """Read a required six-port string array without exposing the schema."""
+    error = f"ports.{field} setting is unavailable or invalid"
+    values = _settings_group(client, "ports", error=error)
+    array = values.get(field)
     if (
         not isinstance(array, list)
         or len(array) != 6
@@ -76,6 +85,48 @@ class Hub:
             response = client.get("/api/hub")
             response.raise_for_status()
             return HubInfo.from_api(response.json())
+
+    def sync_location(
+        self, *, city: str | None = None, country: str | None = None
+    ) -> Location:
+        """Persist host-derived location metadata and confirm it by read-back.
+
+        The default city represents the configured host timezone, not actual
+        geolocation; the default country is its ISO code. Nonempty overrides
+        are stripped, and both are required for an unlisted timezone.
+        Only whole-hour offsets from UTC-12 through UTC+14 are supported.
+        The current offset includes DST but is fixed: rerun after transitions.
+        This changes no clock directly and preserves other location settings.
+        """
+        expected = _host_location(city=city, country=country)
+        with httpx2.Client(base_url=self.base_url, timeout=5.0) as client:
+            response = client.post(
+                "/api/settings",
+                json={
+                    "location": {
+                        "city": expected.city,
+                        "country": expected.country,
+                        "utc_offset": expected.utc_offset_hours,
+                    }
+                },
+            )
+            response.raise_for_status()
+            error = "location setting was not confirmed"
+            values = _settings_group(client, "location", error=error)
+            actual_city = values.get("city")
+            actual_country = values.get("country")
+            actual_offset = values.get("utc_offset")
+            if (
+                not isinstance(actual_city, str)
+                or not isinstance(actual_country, str)
+                or not isinstance(actual_offset, int)
+                or isinstance(actual_offset, bool)
+                or actual_city != expected.city
+                or actual_country != expected.country
+                or actual_offset != expected.utc_offset_hours
+            ):
+                raise RuntimeError(error)
+            return Location(actual_city, actual_country, actual_offset)
 
     def ports(self) -> list[PortStatus]:
         """Fetch all port snapshots; bulk data does not include power modes."""

@@ -33,6 +33,9 @@ hub watch 6 --interval 0.5 # monitor one port until Ctrl+C
 hub info --json
 hub status 6 --json
 hub watch 6 --json        # one JSON snapshot per line
+hub location sync                         # timezone-derived city/country/current offset
+hub location sync --city Melbourne        # actual-city override; country still inferred
+hub location sync --city Melbourne --country AU --json
 ```
 
 The default address is `http://usb-hub.local`. Override it with `--host` (before
@@ -132,6 +135,46 @@ whole array by read-back. Other ports' names and modes are preserved. A rejected
 write raises `RuntimeError` even if HTTP returned 200. Updates are not atomic
 with another client editing the same setting; avoid concurrent edits.
 
+### Host location synchronization
+
+The current firmware can persist city, country and UTC offset through its
+existing settings API; no firmware update is needed:
+
+```python
+from smart_hub import Hub, Location
+
+hub = Hub()
+location: Location = hub.sync_location()
+location = hub.sync_location(city="Melbourne", country="AU")
+print(location.city, location.country, location.utc_offset_hours)
+```
+
+`hub location sync` and `Hub.sync_location()` use the host's configured IANA
+timezone. The default city is its **representative timezone city**, not a
+geolocation result. Country defaults to the timezone's ISO country code from
+bundled timezone data. For example, `Australia/Sydney` gives `Sydney`, `AU`, and
+currently UTC+10 or UTC+11 depending on daylight saving.
+
+Use `--city` / `--country` (or the matching keyword arguments) when actual
+location labels differ. Values are trimmed and must not be blank. Generic UTC
+and other timezones without a listed location require both overrides. Detection
+is offline: it does not use an IP geolocation service, locale, or Windows
+location services. In WSL, it uses the Linux timezone visible to Python.
+
+The offset is the host's **current** offset, including daylight saving. The hub
+stores only a fixed integer offset from -12 through +14 hours, not an IANA zone
+or future DST rules. Rerun synchronization after DST changes. Fractional-hour
+offsets (such as Adelaide or Kathmandu) are rejected before contacting the hub,
+never rounded.
+
+Only `city`, `country`, and `utc_offset` are written; NTP server and display
+preferences are preserved. The three values are read back before success is
+reported, returning an immutable `Location`. `--json` emits its normalized
+`city`, `country`, and integer `utc_offset_hours` fields. This is not a direct
+clock-setting operation: NTP remains active. Changing the offset changes the
+local time used by the hub's schedules.
+
+
 ### Information, status and identification
 
 ```python
@@ -146,8 +189,8 @@ print(port.enabled, port.occupied, port.current_ma, port.next_action)
 hub.identify(6)  # flashes the LED; does not change power
 ```
 
-`HubInfo`, `PortStatus` and `ScheduledAction` are frozen dataclasses. They are
-snapshots, not live views; fetch again to refresh them. Use
+`HubInfo`, `PortStatus`, `ScheduledAction`, and `Location` are frozen dataclasses.
+They are snapshots, not live views; fetch again to refresh them. Use
 `dataclasses.asdict(snapshot)` for a JSON-compatible dictionary.
 
 - `enabled` means the firmware's switch state, not proof that a 5 V supply or

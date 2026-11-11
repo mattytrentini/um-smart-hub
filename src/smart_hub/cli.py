@@ -14,15 +14,17 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from smart_hub import Hub, HubInfo, PortStatus, PowerMode
+from smart_hub import Hub, HubInfo, Location, PortStatus, PowerMode
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
+location_app = typer.Typer(add_completion=False, no_args_is_help=True)
+app.add_typer(location_app, name="location", help="Set city, country, and UTC offset.")
 Port = Annotated[int, typer.Argument(min=1, max=6, help="Port number (1-6).")]
 OptionalPort = Annotated[
     int | None, typer.Argument(min=1, max=6, help="Port number; omit for all ports.")
 ]
 JsonOutput = Annotated[
-    bool, typer.Option("--json", help="Output JSON instead of a table.")
+    bool, typer.Option("--json", help="Output JSON instead of human-readable text.")
 ]
 console = Console(markup=False, highlight=False, emoji=False)
 
@@ -60,7 +62,7 @@ def _run(
             typer.echo(f"port {port} {'on' if result else 'off'}")
 
 
-def _json(snapshot: HubInfo | PortStatus | list[PortStatus]) -> None:
+def _json(snapshot: HubInfo | Location | PortStatus | list[PortStatus]) -> None:
     data = (
         [asdict(port) for port in snapshot]
         if isinstance(snapshot, list)
@@ -316,3 +318,36 @@ def mode(ctx: typer.Context, port: Port, mode: PowerMode) -> None:
     with _errors():
         confirmed = ctx.obj.set_power_mode(port, mode)
         typer.echo(f"port {port} mode: {confirmed.value}")
+
+
+@location_app.command("sync")
+def sync_location(
+    ctx: typer.Context,
+    city: Annotated[
+        str | None,
+        typer.Option(
+            help="City override; defaults to the timezone's representative city."
+        ),
+    ] = None,
+    country: Annotated[
+        str | None,
+        typer.Option(
+            help="Country override; defaults to the timezone's ISO country code."
+        ),
+    ] = None,
+    json_output: JsonOutput = False,
+) -> None:
+    """Set hub location from the host's configured timezone and current UTC offset.
+
+    This is not geolocation or clock setting. The offset includes current DST;
+    rerun after DST changes. Fractional-hour offsets aren't supported by firmware.
+    """
+    with _errors():
+        location = ctx.obj.sync_location(city=city, country=country)
+        if json_output:
+            _json(location)
+        else:
+            typer.echo(
+                f"location: {location.city}, {location.country} "
+                f"(UTC{location.utc_offset_hours:+d})"
+            )

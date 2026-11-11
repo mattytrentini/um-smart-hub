@@ -5,6 +5,19 @@ from enum import StrEnum
 from typing import Any
 
 
+@dataclass(frozen=True)
+class Location:
+    """Location metadata and a fixed, whole-hour UTC-offset snapshot.
+
+    An inferred city represents the host timezone, not actual geolocation.
+    The offset includes current DST, but stores no rule for later transitions.
+    """
+
+    city: str
+    country: str
+    utc_offset_hours: int
+
+
 class PowerMode(StrEnum):
     """Automatic power behavior configured for a port."""
 
