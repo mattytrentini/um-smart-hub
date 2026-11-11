@@ -14,7 +14,7 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from smart_hub import Hub, HubInfo, PortStatus
+from smart_hub import Hub, HubInfo, PortStatus, PowerMode
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 Port = Annotated[int, typer.Argument(min=1, max=6, help="Port number (1-6).")]
@@ -49,13 +49,15 @@ def _errors() -> Generator[None]:
         raise typer.Exit(1) from error
 
 
-def _run(port: int, action: Callable[[], bool | Coroutine[Any, Any, None]]) -> None:
+def _run(
+    port: int, action: Callable[[], bool | Coroutine[Any, Any, bool | None]]
+) -> None:
     with _errors():
         result = action()
+        if not isinstance(result, bool):
+            result = asyncio.run(result)
         if isinstance(result, bool):
             typer.echo(f"port {port} {'on' if result else 'off'}")
-        else:
-            asyncio.run(result)
 
 
 def _json(snapshot: HubInfo | PortStatus | list[PortStatus]) -> None:
@@ -272,3 +274,45 @@ def toggle(
     if seconds is not None:
         typer.echo(f"toggling port {port} every {seconds:g} seconds; Ctrl+C to stop")
     _run(port, lambda: ctx.obj.toggle(port, seconds))
+
+
+@app.command()
+def cycle(
+    ctx: typer.Context,
+    port: Port,
+    seconds: Annotated[
+        float,
+        typer.Argument(
+            min=0, help="Seconds to leave the port off before turning it on."
+        ),
+    ] = 2.0,
+) -> None:
+    """Switch PORT off, wait SECONDS, then switch it on and exit.
+
+    Ctrl+C during the wait leaves the port off.
+    """
+    _run(port, lambda: ctx.obj.cycle(port, seconds))
+
+
+@app.command()
+def name(
+    ctx: typer.Context,
+    port: Port,
+    name: Annotated[str, typer.Argument(help='Port name; use "" to clear it.')],
+) -> None:
+    """Persist PORT's name, normalized to the firmware's 24-character limit."""
+    with _errors():
+        confirmed = ctx.obj.rename(port, name)
+        typer.echo(f"port {port} name: {confirmed!r}")
+
+
+@app.command()
+def mode(ctx: typer.Context, port: Port, mode: PowerMode) -> None:
+    """Persist PORT's power mode: manual, boot, or connect.
+
+    Boot can turn power on immediately; connect can do so if a device is present.
+    Manual leaves current power unchanged.
+    """
+    with _errors():
+        confirmed = ctx.obj.set_power_mode(port, mode)
+        typer.echo(f"port {port} mode: {confirmed.value}")

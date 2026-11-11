@@ -19,6 +19,10 @@ hub on 1        # turn port 1 on
 hub off 1       # turn port 1 off
 hub toggle 1    # read the current power state and flip it once
 hub toggle 1 5  # flip immediately, then every 5 seconds until Ctrl+C
+hub cycle 6 2  # off, wait two seconds, on, then exit (default wait: 2 seconds)
+hub name 6 Logger
+hub name 6 ""  # clear the name
+hub mode 6 connect  # manual, boot, or connect
 hub --host http://192.168.2.124 on 1
 hub info                  # hub identity, supplies, sensors and hardware health
 hub status                # all six ports
@@ -67,6 +71,66 @@ enabled = hub.toggle(6)  # a synchronous, single flip; returns the new bool stat
 `on`, `off`, and single-flip `toggle` are blocking calls returning the confirmed
 power state. Synchronous operations close their HTTP clients; `Hub` itself
 needs no explicit cleanup or context manager.
+
+### Power cycling
+
+Unlike `toggle`, a cycle always switches off first, waits once, then switches on
+and exits. Successful cycles end on regardless of the starting power state.
+`hub cycle 6` uses a two-second off interval; `hub cycle 6 0.5` uses half a second.
+Ctrl+C during the wait leaves the port **off**—there is no cleanup command to
+turn it back on. Existing schedules and automatic power modes remain active.
+
+The library operation is asynchronous and returns the confirmed final state:
+
+```python
+import asyncio
+from smart_hub import Hub
+
+
+async def restart():
+    hub = Hub()
+    enabled = await hub.cycle(6, seconds=2)  # True on successful completion
+    print(enabled)
+
+
+asyncio.run(restart())
+```
+
+Cancellation propagates as `asyncio.CancelledError`. An HTTP request interrupted
+in flight may already have reached the hub, so its resulting state is uncertain.
+
+### Port names and power modes
+
+```python
+from smart_hub import Hub, PowerMode
+
+hub = Hub()
+name = hub.rename(6, "Logger")  # returns the confirmed, normalized name
+hub.rename(6, "")  # empty clears it
+mode = hub.set_power_mode(6, PowerMode.CONNECT)
+hub.set_power_mode(6, "manual")  # strings are accepted too
+print(hub.status(6).name, hub.status(6).power_mode)
+```
+
+Names follow the firmware's normalization: ASCII controls become spaces, only
+the first 24 Unicode code points are retained, then surrounding ASCII spaces
+are trimmed. `rename` returns the stored name; non-string names raise `TypeError`.
+
+| Mode | Behavior |
+|---|---|
+| `manual` | API, buttons and schedules control power; selecting it leaves current power unchanged |
+| `boot` | Power on at startup; changing to this mode also turns power on immediately |
+| `connect` | Power on when a device is connected and off when unplugged; changing to this mode can turn power on immediately if a device is present |
+
+Selecting a mode never switches a port off by itself. Names and modes persist
+on the hub. `set_power_mode` returns a confirmed `PowerMode`; invalid modes raise
+`ValueError`. Read current values through `status(port)`.
+
+The firmware requires complete six-port arrays. These methods read the current
+array, change only the selected port, write only that setting, then verify the
+whole array by read-back. Other ports' names and modes are preserved. A rejected
+write raises `RuntimeError` even if HTTP returned 200. Updates are not atomic
+with another client editing the same setting; avoid concurrent edits.
 
 ### Information, status and identification
 
@@ -159,8 +223,9 @@ with suppress(asyncio.CancelledError):
 Cancellation propagates normally and doesn't send a final power command. If a
 request is interrupted in flight, it may already have reached the hub.
 
-Ports are numbered 1–6. Toggle intervals must be finite and non-negative; zero
-means no intentional delay. Invalid arguments raise `ValueError`; HTTP failures
+Ports are numbered 1–6. Toggle and cycle intervals must be finite and
+non-negative; zero means no intentional delay. Invalid port numbers, modes and
+durations raise `ValueError`; HTTP failures
 propagate as `httpx2.HTTPError`. Power writes check the hub's reported state,
 raising `RuntimeError` if it doesn't match; `identify` checks the acknowledgement.
 CLI errors exit with code 1. Existing hub schedules remain active and can

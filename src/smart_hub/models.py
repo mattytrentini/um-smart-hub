@@ -1,7 +1,16 @@
-"""Immutable snapshots decoded from the hub's REST API."""
+"""Power modes and immutable snapshots decoded from the hub's REST API."""
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
+
+
+class PowerMode(StrEnum):
+    """Automatic power behavior configured for a port."""
+
+    MANUAL = "manual"
+    BOOT = "boot"
+    CONNECT = "connect"
 
 
 @dataclass(frozen=True)
