@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import httpx2
 
-from smart_hub import Hub, HubInfo, PortStatus, ScheduledAction
+from smart_hub import Hub, HubInfo, Location, PortStatus, ScheduledAction
 
 HUB_DATA: dict[str, Any] = {
     "name": "Smart USB Hub",
@@ -187,6 +187,7 @@ class ReadTests(unittest.IsolatedAsyncioTestCase):
             (self.hub.info(), "temperature_c", 12.0),
             (status, "enabled", False),
             (status.next_action, "enabled", True),
+            (Location("Sydney", "AU", 11), "city", "Changed"),
         )
         # Dynamic writes exercise the runtime immutability contract.
         for snapshot, field, value in snapshots:
